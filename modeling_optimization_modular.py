@@ -13,6 +13,7 @@ from pymoo.algorithms.moo.nsga2 import NSGA2
 from pymoo.optimize import minimize
 from scipy.interpolate import griddata
 from matplotlib.colors import ListedColormap, BoundaryNorm
+import random
 
 # ================================
 # Data Loading and Preprocessing
@@ -36,12 +37,22 @@ def normalize_split_data(X, y):
     X_test_norm = scaler.transform(X_test)
     return X_train_norm, X_test_norm, y_train, y_test, scaler
 
+def set_seed(seed=42):
+    torch.manual_seed(seed)                # Set PyTorch seed
+    np.random.seed(seed)                   # Set NumPy seed
+    random.seed(seed)                      # Set built-in Python seed
+    torch.cuda.manual_seed(seed)           # If using CUDA
+    torch.cuda.manual_seed_all(seed)       # For multi-GPU (if applicable)
 
+    # For reproducible GPU results
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 # ================================
 # Model Definition
 # ================================
 class NeuralNet(nn.Module):
     def __init__(self):
+
         super(NeuralNet, self).__init__()
         self.net = nn.Sequential(
             nn.Linear(5, 6),
@@ -136,7 +147,7 @@ def plot_solution_space(x, y, Z, lbl):
 
     XY = np.column_stack((x, y))
     # Step 2: Interpolate Z values onto the grid
-    grid_z = griddata(XY, Z, (grid_x, grid_y), method='cubic')
+    grid_z = griddata(XY, Z, (grid_x, grid_y), method='linear')
     # Step 3: Plot filled contours
     plt.figure(figsize=(8, 6))
     contour = plt.contourf(grid_x, grid_y, grid_z, levels=50, cmap='jet')#'viridis')
@@ -149,6 +160,31 @@ def plot_solution_space(x, y, Z, lbl):
     # plt.axis('equal')
     plt.ylim([0, 0.7])
     plt.grid(True)
+
+def plot_pareto(x, y,z, res):
+    # Step 1: Create a grid over the region
+    grid_x, grid_y = np.meshgrid(
+        np.linspace(x.min(), x.max(), 200),
+        np.linspace(y.min(), y.max(), 200)
+    )
+
+    XY = np.column_stack((x, y))
+    # Step 2: Interpolate Z values onto the grid
+    grid_z = griddata(XY, z, (grid_x, grid_y), method='linear')
+    # Step 3: Plot filled contours
+    plt.figure(figsize=(8, 6))
+    contour = plt.contourf(grid_x, grid_y, grid_z,levels=1,alpha=0.3, cmap='tab10',label='Solution Space')#'viridis')
+    # cbar = plt.colorbar(contour)
+    # cbar.set_label(lbl, fontsize=14)  # ⬅️ set the label font size
+    plt.scatter(res['Energy Consumption'], res['Recovery'], c='blue', alpha=0.6, label='Pareto Front')
+    plt.xlabel('Energy Consumption',fontsize=14)
+    plt.ylabel('Recovery', fontsize=14)
+    plt.legend(fontsize=14, loc='upper left')
+    plt.grid(True)
+    # plt.axis('equal')
+    plt.ylim([0, 0.7])
+    plt.grid(True)
+
 
     
 def plot_solution_space_discerete(x, y, Z, lbl):
@@ -197,6 +233,7 @@ if __name__ == '__main__':
     y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
 
     # Train model
+    set_seed(42)
     model = NeuralNet()
     model, test_mse_list, train_mse_list = train_model(model, X_train_tensor, y_train_tensor, X_test_tensor, y_test_tensor)
     # Save the model
@@ -227,7 +264,8 @@ if __name__ == '__main__':
     Z2 = df_res['temperature'] 
     Z3 = df_res['salinity']
     Z4 = df_res['pressure']
-    Z5 = df_res['membrane'].apply(lambda x: 0 if x < 0.7 else 1)#.apply(lambda x: 0 if x == 'Membrane AG' else  1)#res.X[:, 4].apply(lambda x: 0 if x == 'Membrane AG' else  1)
+    Z5 = df_res['membrane'].apply(lambda x: 0 if x < 1 else 1)#.apply(lambda x: 0 if x == 'Membrane AG' else  1)#res.X[:, 4].apply(lambda x: 0 if x == 'Membrane AG' else  1)
+    Z6 = df_res['membrane'].apply(lambda x: 0 if x < 0.2 else 1)#.apply(lambda x: 0 if x == 'Membrane AG' else  1)#res.X[:, 4].apply(lambda x: 0 if x == 'Membrane AG' else  1)
 
     plot_solution_space(x, y, Z1, 'Feed flow')
     plt.savefig('feed_flow.png')
@@ -239,6 +277,8 @@ if __name__ == '__main__':
     plt.savefig('pressure.png')
     plot_solution_space_discerete(x, y, Z5, 'Membrane')
     plt.savefig('membrane.png')
+    plot_pareto(x, y,Z6,df_res)
+    plt.savefig('pareto.png')
     plt.show()
 
 
