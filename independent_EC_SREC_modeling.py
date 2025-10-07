@@ -35,14 +35,18 @@ def load_and_prepare_data(file1, file2):
     return X, y
 
 
-def normalize_split_data(X, y):
+def normalize_split_data(X, y, normalize_y=True):
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     scaler_x = StandardScaler()
     scaler_y = StandardScaler()
     X_train_norm = scaler_x.fit_transform(X_train)
     X_test_norm = scaler_x.transform(X_test)
-    y_train_norm = scaler_y.fit_transform(y_train.reshape(-1, 1))
-    y_test_norm = scaler_y.transform(y_test.reshape(-1, 1))
+    if normalize_y:
+        y_train_norm = scaler_y.fit_transform(y_train.reshape(-1, 1))
+        y_test_norm = scaler_y.transform(y_test.reshape(-1, 1))
+    else:
+        y_train_norm = y_train
+        y_test_norm = y_test
     return X_train_norm, X_test_norm, y_train_norm, y_test_norm, scaler_x, scaler_y
 
 
@@ -222,7 +226,7 @@ class TwoModelRatioProblem(ElementwiseProblem):
         # Guard against tiny/negative recovery (if model extrapolates)
         rec = max(recovery, self.recovery_floor)
 
-        J = energy / (1-rec)  # since recovery model predicts 1 - recovery
+        J = energy / (rec)  # since recovery model predicts 1 - recovery
 
         # Optional soft penalty if recovery is very small (helps steer search)
         if self.penalty_small_recovery > 0.0 and recovery < 0.05:  # tune threshold to your scale
@@ -283,7 +287,7 @@ def run_single_objective_ratio_optimization(
     # Recompute outputs for the winner
     with torch.no_grad():
         e_opt, r_opt, X_used = problem._predict_models(np.array(X_opt, dtype=np.float32))
-    J_opt = e_opt / max((1-r_opt), 1e-6) # model predicts 1 - recovery
+    J_opt = e_opt / max((r_opt), 1e-6) # model predicts recovery
     X_used = np.squeeze(scaler_x_REC.inverse_transform(X_used.reshape(1,-1)))
     df = pd.DataFrame([{
         'feed_flow':   X_used[0],
@@ -489,8 +493,8 @@ def generate_random_df(N, col_ranges):
 # ================================
 if __name__ == '__main__':
     X, y = load_and_prepare_data('AG.xlsx', 'AK.xlsx')
-    X_train_norm_EC, X_test_norm_EC, y_train_norm_EC, y_test_norm_EC, scaler_x_EC, scaler_y_EC = normalize_split_data(X, y[:,-2]) # energy consumption
-    X_train_norm_REC, X_test_norm_REC, y_train_norm_REC, y_test_norm_REC, scaler_x_REC, scaler_y_REC = normalize_split_data(X, y[:,-1]) # recovery
+    X_train_norm_EC, X_test_norm_EC, y_train_norm_EC, y_test_norm_EC, scaler_x_EC, scaler_y_EC = normalize_split_data(X, y[:,-2], normalize_y = True) # energy consumption
+    X_train_norm_REC, X_test_norm_REC, y_train_norm_REC, y_test_norm_REC, scaler_x_REC, scaler_y_REC = normalize_split_data(X, y[:,-1], normalize_y = False) # recovery
     # Convert to tensors
     X_train_tensor_EC = torch.tensor(X_train_norm_EC, dtype=torch.float32)
     y_train_tensor_EC = torch.tensor(y_train_norm_EC, dtype=torch.float32)
@@ -537,7 +541,7 @@ if __name__ == '__main__':
         X_train_norm=X_train_norm_EC,
         scaler_x=None,                 # pass if you want to optimize in original units
         scaler_energy=scaler_y_EC,   # or None if already in real units
-        scaler_recovery=scaler_y_REC,
+        scaler_recovery=None,
         pop_size=150,
         n_gen=300,
         discrete_last_var=True
@@ -559,43 +563,43 @@ if __name__ == '__main__':
     # df_res_EC = run_nsga2(model_EC, scaler_x_EC, scaler_y_EC, X_train_norm_EC)# model predicts 1 - recovery
     # df_res_REC = run_nsga2(model_REC, scaler_x_REC, scaler_y_REC, X_train_norm_REC)
     ########################################################################
-    input_data_norm_EC = np.column_stack((best_df.iloc[:,0], best_df.iloc[:,1], best_df.iloc[:,2], best_df.iloc[:,3], best_df.iloc[:,4]))#scaler_x.transform(np.column_stack((Z1, Z2, Z3, Z4, Z5)))
-    input_data_EC = torch.tensor(input_data_norm_EC, dtype=torch.float32)
+    # input_data_norm_EC = np.column_stack((best_df.iloc[:,0], best_df.iloc[:,1], best_df.iloc[:,2], best_df.iloc[:,3], best_df.iloc[:,4]))#scaler_x.transform(np.column_stack((Z1, Z2, Z3, Z4, Z5)))
+    # input_data_EC = torch.tensor(input_data_norm_EC, dtype=torch.float32)
 
-    #  ####################################### Step 3: Feed inputs into the model (assume model is already defined and loaded)
-    model_EC.eval()
-    model_REC.eval()
-    with torch.no_grad():
-        output_EC = model_EC(input_data_EC)  # expect shape: [n_samples, 2]
-        output_REC = model_REC(input_data_EC)  # expect shape: [n_samples, 2]
+    # #  ####################################### Step 3: Feed inputs into the model (assume model is already defined and loaded)
+    # model_EC.eval()
+    # model_REC.eval()
+    # with torch.no_grad():
+    #     output_EC = model_EC(input_data_EC)  # expect shape: [n_samples, 2]
+    #     output_REC = model_REC(input_data_EC)  # expect shape: [n_samples, 2]
 
-    # Step 4: Convert output to NumPy and plot
-    output_np_EC = output_EC.cpu().numpy()
-    output_np_EC = scaler_y_EC.inverse_transform(output_np_EC)
+    # # Step 4: Convert output to NumPy and plot
+    # output_np_EC = output_EC.cpu().numpy()
+    # # output_np_EC = scaler_y_EC.inverse_transform(output_np_EC)
 
-    output_np_REC = output_REC.cpu().numpy()
-    output_np_REC = scaler_y_REC.inverse_transform(output_np_REC)
-    # output_np[:, 1] = (1 - output_np[:, 1])*100
-    # df_res['Energy Consumption'] = output_np_EC[:, 0]
-    # df_res_EC['Recovery'] = output_np_EC[:, 1]
+    # output_np_REC = output_REC.cpu().numpy()
+    # # output_np_REC = scaler_y_REC.inverse_transform(output_np_REC)
+    # # output_np[:, 1] = (1 - output_np[:, 1])*100
+    # # df_res['Energy Consumption'] = output_np_EC[:, 0]
+    # # df_res_EC['Recovery'] = output_np_EC[:, 1]
 
-    # df_res_REC['Energy Consumption'] = output_np_REC[:, 0]
-    # df_res_REC['Recovery'] = output_np_REC[:, 1]
+    # # df_res_REC['Energy Consumption'] = output_np_REC[:, 0]
+    # # df_res_REC['Recovery'] = output_np_REC[:, 1]
 
-    plt.figure(figsize=(8, 6))
-    plt.scatter(best_df['Energy'], (1-best_df['Recovery'])*100, c='green', alpha=0.6)
-    plt.xlabel('Energy Consumption (Watt)',fontsize=14)
-    plt.ylabel('Recovery (%)', fontsize=14)
-    plt.title('Optimal Set')
-    plt.grid(True)
+    # plt.figure(figsize=(8, 6))
+    # plt.scatter(best_df['Energy'], (best_df['Recovery'])*100, c='green', alpha=0.6)
+    # plt.xlabel('Energy Consumption (Watt)',fontsize=14)
+    # plt.ylabel('Recovery (%)', fontsize=14)
+    # plt.title('Optimal Set')
+    # plt.grid(True)
 
 
-    plt.figure(figsize=(8, 6))
-    plt.scatter(best_df['Energy'], (1-best_df['Recovery'])*100, c='blue', alpha=0.6)
-    plt.xlabel('Energy Consumption (Watt)',fontsize=14)
-    plt.ylabel('Recovery (%)', fontsize=14)
-    plt.title('Optimal Set')
-    plt.grid(True)
+    # plt.figure(figsize=(8, 6))
+    # plt.scatter(best_df['Energy'], (best_df['Recovery'])*100, c='blue', alpha=0.6)
+    # plt.xlabel('Energy Consumption (Watt)',fontsize=14)
+    # plt.ylabel('Recovery (%)', fontsize=14)
+    # plt.title('Optimal Set')
+    # plt.grid(True)
 
     # plt.show()
 
@@ -623,6 +627,7 @@ if __name__ == '__main__':
 
     ########################################################################
     input_data_norm = np.column_stack((Z1, Z2, Z3, Z4, Z5))#scaler_x.transform(np.column_stack((Z1, Z2, Z3, Z4, Z5)))
+    input_data_norm = scaler_x_REC.transform(input_data_norm)
     input_data = torch.tensor(input_data_norm, dtype=torch.float32)
 
     #  ####################################### Step 3: Feed inputs into the model (assume model is already defined and loaded)
@@ -636,10 +641,10 @@ if __name__ == '__main__':
     output_np_EC = output_EC.cpu().numpy()
     output_np_EC = scaler_y_EC.inverse_transform(output_np_EC)
     output_np_REC = output_REC.cpu().numpy()
-    output_np_REC = scaler_y_REC.inverse_transform(output_np_REC)
-    output_np_REC[:, 0] = (1 - output_np_REC[:, 0])*100
+    # output_np_REC = scaler_y_REC.inverse_transform(output_np_REC)
+    tt = (output_np_REC[:, 0])
     x = output_np_EC[:, 0]
-    y = output_np_REC[:, 0]
+    y = tt#output_np_REC[:, 0]
 
     plot_solution_space(x, y, Z1, 'Feed flow (LPM)')
     plt.savefig('feed_flow.png')
@@ -701,12 +706,12 @@ if __name__ == '__main__':
     # output_np_EC[:, 0] = (1 - output_np_EC[:, 0])*100  # 1 - recovery
 
     output_np_REC = output_REC.cpu().numpy()
-    output_np_REC = scaler_y_REC.inverse_transform(output_np_REC)
-    output_np_REC[:, 0] = (1 - output_np_REC[:, 0])*100  # 1 - recovery
+    # output_np_REC = scaler_y_REC.inverse_transform(output_np_REC)
+    # output_np_REC[:, 0] = (1 - output_np_REC[:, 0])*100  # 1 - recovery
     # outpu_np = scaler.inverse_transform(output_np)
-    plt.scatter(output_np_EC[:, 0], output_np_REC[:, 0], alpha=0.1, c='green', edgecolors='k')#, label='Modeled Output')
+    plt.scatter(output_np_EC[:, 0], output_np_REC[:, 0]*100, alpha=0.1, c='green', edgecolors='k')#, label='Modeled Output')
     # Compute convex hull
-    tt = np.concatenate((output_np_EC, output_np_REC), axis=1)
+    tt = np.concatenate((output_np_EC, output_np_REC*100), axis=1)
     hull = ConvexHull(tt)
     for simplex in hull.simplices:
         plt.plot(tt[simplex, 0], tt[simplex, 1], 'g-')
@@ -797,7 +802,7 @@ if __name__ == '__main__':
     
 
     output_np_REC = output_REC.cpu().numpy()
-    output_np_REC = scaler_y_REC.inverse_transform(output_np_REC)
+    # output_np_REC = scaler_y_REC.inverse_transform(output_np_REC)
     output_np_REC[:, 0] = (1 - output_np_REC[:, 0])*100  # 1 - recovery
     # outpu_np = scaler.inverse_transform(output_np)
     plt.scatter(output_np_EC[:, 0], output_np_REC[:, 0], alpha=0.1, c='green', edgecolors='k')#, label='ANN Output')
